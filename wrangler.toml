@@ -1,0 +1,30 @@
+name = "drawzilla-backend"
+main = "src/index.ts"
+compatibility_date = "2025-05-25"
+
+[triggers]
+crons = ["0 2 * * *"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "drawzilla-db"
+database_id = "2b12262c-728c-474a-93ba-0d2e55c97330"
+
+[[r2_buckets]]
+binding = "STORAGE"
+bucket_name = "drawzilla-canvases"
+
+[vars]
+ENVIRONMENT = "production"
+
+# Secrets — set via: wrangler secret put <KEY>
+# CLERK_SECRET_KEY
+# STRIPE_SECRET_KEY
+# STRIPE_WEBHOOK_SECRET
+# CLERK_WEBHOOK_SECRET
+
+# Pre-production checklist:
+# 1. Apply D1 migrations: npx wrangler d1 migrations apply drawzilla-db --remote
+# 2. Set secrets above
+# 3. Add Cloudflare WAF Rate Limiting rule (dashboard) targeting POST /canvases/*/share
+#    to prevent rapid frozen-share creation abuse (recommended: 20 req/min per IP)

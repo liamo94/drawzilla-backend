@@ -1,0 +1,22 @@
+{
+  "name": "drawzilla-backend",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:migrate:local": "wrangler d1 migrations apply drawzilla-db --local",
+    "db:migrate:remote": "wrangler d1 migrations apply drawzilla-db --remote"
+  },
+  "dependencies": {
+    "@clerk/backend": "^1.26.0",
+    "hono": "^4.7.10",
+    "stripe": "^17.7.0",
+    "svix": "^1.57.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250525.0",
+    "typescript": "^5.8.3",
+    "wrangler": "^4.14.4"
+  }
+}

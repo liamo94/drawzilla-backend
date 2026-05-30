@@ -1,0 +1,1 @@
+ALTER TABLE canvases ADD COLUMN stroke_count INTEGER NOT NULL DEFAULT 0;
