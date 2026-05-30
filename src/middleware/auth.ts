@@ -20,9 +20,15 @@ export const requireAuth = createMiddleware<{ Bindings: Env; Variables: AuthVari
         'SELECT 1 FROM users WHERE clerk_id = ?'
       ).bind(payload.sub).first()
       if (!existing) {
-        await c.env.DB.prepare(
-          `INSERT INTO users (clerk_id, plan, created_at) VALUES (?, 'free', ?)`
-        ).bind(payload.sub, Math.floor(Date.now() / 1000)).run()
+        const workspaceId = crypto.randomUUID()
+        await c.env.DB.batch([
+          c.env.DB.prepare(
+            `INSERT INTO users (clerk_id, plan, created_at) VALUES (?, 'free', ?)`
+          ).bind(payload.sub, Math.floor(Date.now() / 1000)),
+          c.env.DB.prepare(
+            'INSERT INTO workspaces (id, user_id, name, position) VALUES (?, ?, ?, ?)'
+          ).bind(workspaceId, payload.sub, 'My Workspace', 0),
+        ])
       }
       await next()
     } catch {

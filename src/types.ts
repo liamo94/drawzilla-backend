@@ -1,3 +1,7 @@
+type RateLimit = {
+  limit(options: { key: string }): Promise<{ success: boolean }>
+}
+
 export type Env = {
   DB: D1Database
   STORAGE: R2Bucket
@@ -7,6 +11,7 @@ export type Env = {
   CLERK_WEBHOOK_SECRET: string
   ENVIRONMENT: string
   STRIPE_PRICE_ID: string
+  RATE_LIMITER: RateLimit
 }
 
 export type DBUser = {

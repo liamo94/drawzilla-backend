@@ -16,6 +16,10 @@ const MAX_NAME_LENGTH = 200
 
 app.post('/', async (c) => {
   const clerkId = c.get('clerkId')
+
+  const { success } = await c.env.RATE_LIMITER.limit({ key: `${clerkId}:migrate` })
+  if (!success) return c.json({ error: 'Too many requests' }, 429)
+
   const body = await c.req.json<{ canvases: LocalCanvas[] }>().catch(() => null)
   if (!body || !Array.isArray(body.canvases) || body.canvases.length === 0) {
     return c.json({ error: 'No canvases provided' }, 400)

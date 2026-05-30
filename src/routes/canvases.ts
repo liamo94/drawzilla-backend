@@ -179,6 +179,9 @@ app.post('/:id/share', async (c) => {
   const { id } = c.req.param()
   const now = Math.floor(Date.now() / 1000)
 
+  const { success } = await c.env.RATE_LIMITER.limit({ key: `${clerkId}:share` })
+  if (!success) return c.json({ error: 'Too many requests' }, 429)
+
   const canvas = await c.env.DB.prepare(
     `SELECT c.id, c.r2_key FROM canvases c
      JOIN workspaces w ON w.id = c.workspace_id

@@ -61,9 +61,16 @@ app.post('/webhook', async (c) => {
         await c.env.DB.prepare(
           'UPDATE users SET plan = ? WHERE stripe_customer_id = ?'
         ).bind('pro', customerId).run()
+      } else if (sub.status === 'past_due') {
+        // Payment failed but Stripe will retry — preserve Pro access during the retry window.
+        // If all retries succeed the next 'active' update restores normal state.
+        // If all retries fail Stripe marks 'unpaid' or 'canceled', handled below.
+        await c.env.DB.prepare(
+          `UPDATE subscriptions SET status = 'past_due', current_period_end = ?
+           WHERE stripe_sub_id = ?`
+        ).bind(sub.current_period_end, sub.id).run()
       } else {
-        // past_due, unpaid, paused, etc. — revoke Pro immediately rather than
-        // waiting for customer.subscription.deleted (which may be days later)
+        // unpaid (all retries exhausted), paused, etc. — revoke Pro immediately.
         await c.env.DB.prepare(
           `UPDATE subscriptions SET status = ?, current_period_end = ?
            WHERE stripe_sub_id = ?`

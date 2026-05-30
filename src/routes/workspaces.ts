@@ -169,6 +169,9 @@ app.post('/:id/share', async (c) => {
   const clerkId = c.get('clerkId')
   const { id } = c.req.param()
 
+  const { success } = await c.env.RATE_LIMITER.limit({ key: `${clerkId}:share` })
+  if (!success) return c.json({ error: 'Too many requests' }, 429)
+
   const user = await c.env.DB.prepare(
     'SELECT plan FROM users WHERE clerk_id = ?'
   ).bind(clerkId).first<{ plan: string }>()

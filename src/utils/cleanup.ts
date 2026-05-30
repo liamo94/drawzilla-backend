@@ -1,6 +1,34 @@
 import type { Env } from '../types'
 import { stashKey } from '../routes/stash'
 
+export async function deleteUserCompletely(env: Env, clerkId: string) {
+  const [{ results: canvases }, { results: frozenShares }] = await Promise.all([
+    env.DB.prepare(
+      `SELECT c.r2_key FROM canvases c
+       JOIN workspaces w ON w.id = c.workspace_id
+       WHERE w.user_id = ?`
+    ).bind(clerkId).all<{ r2_key: string }>(),
+    env.DB.prepare(
+      `SELECT sh.r2_key FROM shares sh
+       JOIN canvases c ON c.id = sh.canvas_id
+       JOIN workspaces w ON w.id = c.workspace_id
+       WHERE sh.type = 'frozen' AND sh.r2_key IS NOT NULL AND w.user_id = ?`
+    ).bind(clerkId).all<{ r2_key: string }>(),
+  ])
+
+  await Promise.all([
+    ...canvases.map(c => env.STORAGE.delete(c.r2_key)),
+    ...frozenShares.map(s => env.STORAGE.delete(s.r2_key)),
+    env.STORAGE.delete(stashKey(clerkId)),
+  ])
+
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM workspaces WHERE user_id = ?').bind(clerkId),
+    env.DB.prepare('DELETE FROM subscriptions WHERE user_id = ?').bind(clerkId),
+    env.DB.prepare('DELETE FROM users WHERE clerk_id = ?').bind(clerkId),
+  ])
+}
+
 export async function cleanupExpiredShares(env: Env) {
   const now = Math.floor(Date.now() / 1000)
   const { results: expired } = await env.DB.prepare(
