@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
+import { withSentry } from '@sentry/cloudflare'
 import type { Env } from './types'
 import workspacesRoute from './routes/workspaces'
 import canvasesRoute from './routes/canvases'
@@ -44,13 +45,19 @@ app.route('/stripe', stripeWebhook)
 app.route('/clerk', clerkWebhook)
 
 
-export default {
-  fetch: app.fetch,
-  async scheduled(_event: ScheduledEvent, env: Env, _ctx: ExecutionContext) {
-    await Promise.all([
-      cleanupExpiredShares(env),
-      cleanupExpiredSubscriptions(env),
-    ])
-    await backupDatabase(env)
-  },
-}
+export default withSentry(
+  (env: Env) => ({
+    dsn: env.SENTRY_DSN,
+    tracesSampleRate: 0,
+  }),
+  {
+    fetch: app.fetch,
+    async scheduled(_event: ScheduledController, env: Env, _ctx: ExecutionContext) {
+      await Promise.all([
+        cleanupExpiredShares(env),
+        cleanupExpiredSubscriptions(env),
+      ])
+      await backupDatabase(env)
+    },
+  }
+)

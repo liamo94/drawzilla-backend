@@ -109,6 +109,9 @@ app.put('/:id', async (c) => {
   const clerkId = c.get('clerkId')
   const { id } = c.req.param()
 
+  const { success } = await c.env.RATE_LIMITER.limit({ key: `${clerkId}:save` })
+  if (!success) return c.json({ error: 'Too many requests' }, 429)
+
   const contentLength = parseInt(c.req.header('content-length') ?? '0')
   if (contentLength > MAX_CANVAS_BYTES) return c.json({ error: 'Payload too large' }, 413)
 

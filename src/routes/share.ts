@@ -39,6 +39,11 @@ app.get('/:token', async (c) => {
     canvasName = canvas.name
   }
 
+  if (share.type === 'frozen') {
+    c.header('Cache-Control', 'public, max-age=3600')
+  } else {
+    c.header('Cache-Control', 'no-store')
+  }
   return c.json({ type: 'canvas', name: canvasName, data: canvasData, expires_at: expiresAt })
 })
 
@@ -64,6 +69,7 @@ app.get('/workspace/:token', async (c) => {
     })
   )
 
+  c.header('Cache-Control', 'no-store')
   return c.json({ type: 'workspace', name: workspace.name, canvases: canvasData })
 })
 

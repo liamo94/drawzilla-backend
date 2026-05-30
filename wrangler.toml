@@ -1,6 +1,7 @@
 name = "drawzilla-backend"
 main = "src/index.ts"
 compatibility_date = "2025-05-25"
+compatibility_flags = ["nodejs_compat"]
 
 [triggers]
 crons = ["0 2 * * *"]
@@ -23,6 +24,7 @@ simple = { limit = 20, period = 60 }
 
 [vars]
 ENVIRONMENT = "production"
+SENTRY_DSN = "https://5366e0811d2be93fd09c85aa577cb7e5@o4511480641945600.ingest.de.sentry.io/4511480648106064"  # set to your Sentry DSN (Workers project)
 
 # Secrets — set via: wrangler secret put <KEY>
 # CLERK_SECRET_KEY

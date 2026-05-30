@@ -12,6 +12,7 @@ export type Env = {
   ENVIRONMENT: string
   STRIPE_PRICE_ID: string
   RATE_LIMITER: RateLimit
+  SENTRY_DSN: string
 }
 
 export type DBUser = {
@@ -29,6 +30,8 @@ export type DBWorkspace = {
   position: number
   share_token: string | null
   share_enabled: number
+  is_pinned: number
+  is_favourite: number
   created_at: number
 }
 

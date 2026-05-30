@@ -20,6 +20,8 @@ export const requireAuth = createMiddleware<{ Bindings: Env; Variables: AuthVari
         'SELECT 1 FROM users WHERE clerk_id = ?'
       ).bind(payload.sub).first()
       if (!existing) {
+        // user.created webhook was missed — auto-provision as fallback
+        console.warn('[requireAuth] fallback provision for clerk_id', payload.sub)
         const workspaceId = crypto.randomUUID()
         await c.env.DB.batch([
           c.env.DB.prepare(

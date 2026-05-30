@@ -36,7 +36,7 @@ app.get('/shared', async (c) => {
 app.get('/', async (c) => {
   const clerkId = c.get('clerkId')
   const { results: workspaces } = await c.env.DB.prepare(
-    'SELECT id, user_id, name, position, share_token, share_enabled, created_at FROM workspaces WHERE user_id = ? ORDER BY position ASC'
+    'SELECT id, user_id, name, position, share_token, share_enabled, is_pinned, is_favourite, created_at FROM workspaces WHERE user_id = ? ORDER BY position ASC'
   ).bind(clerkId).all<DBWorkspace>()
 
   if (workspaces.length === 0) return c.json([])
@@ -60,6 +60,9 @@ const EXPORT_CANVAS_CAP = 50
 app.get('/export', async (c) => {
   const clerkId = c.get('clerkId')
 
+  const { success } = await c.env.RATE_LIMITER.limit({ key: `${clerkId}:export` })
+  if (!success) return c.json({ error: 'Too many requests' }, 429)
+
   const { results: workspaces } = await c.env.DB.prepare(
     'SELECT id, name FROM workspaces WHERE user_id = ? ORDER BY position ASC'
   ).bind(clerkId).all<{ id: string; name: string }>()
@@ -73,14 +76,12 @@ app.get('/export', async (c) => {
      LIMIT ${EXPORT_CANVAS_CAP}`
   ).bind(...workspaces.map(w => w.id)).all<{ id: string; workspace_id: string; name: string; r2_key: string }>()
 
-  const blobs = await Promise.all(canvases.map(canvas => c.env.STORAGE.get(canvas.r2_key)))
-
-  const canvasData = await Promise.all(canvases.map(async (canvas, i) => {
-    const data: CanvasData = blobs[i]
-      ? await blobs[i]!.json<CanvasData>()
-      : { strokes: [], view: { x: 0, y: 0, scale: 1 } }
-    return { ...canvas, data }
-  }))
+  const canvasData: { id: string; workspace_id: string; name: string; r2_key: string; data: CanvasData }[] = []
+  for (const canvas of canvases) {
+    const obj = await c.env.STORAGE.get(canvas.r2_key)
+    const data: CanvasData = obj ? await obj.json<CanvasData>() : { strokes: [], view: { x: 0, y: 0, scale: 1 } }
+    canvasData.push({ ...canvas, data })
+  }
 
   return c.json({
     workspaces: workspaces.map(ws => ({
@@ -92,27 +93,33 @@ app.get('/export', async (c) => {
   })
 })
 
+const WORKSPACE_BASE_CAP = 50
+const WEEKS_PER_EXTRA_WORKSPACE = 1
+
 app.post('/', async (c) => {
   const clerkId = c.get('clerkId')
 
   const user = await c.env.DB.prepare(
-    'SELECT plan FROM users WHERE clerk_id = ?'
-  ).bind(clerkId).first<{ plan: string }>()
+    `SELECT u.plan, s.started_at
+     FROM users u
+     LEFT JOIN subscriptions s ON s.user_id = u.clerk_id AND s.status != 'expired'
+     WHERE u.clerk_id = ?`
+  ).bind(clerkId).first<{ plan: string; started_at: number | null }>()
   if (!user) return c.json({ error: 'User not found' }, 404)
 
-  if (user.plan === 'free') {
-    const { results } = await c.env.DB.prepare(
-      'SELECT id FROM workspaces WHERE user_id = ?'
-    ).bind(clerkId).all()
-    if (results.length >= 1) return c.json({ error: 'Pro required for multiple workspaces' }, 403)
-  }
-
-  const { name } = await c.req.json<{ name?: string }>().catch(() => ({ name: undefined }))
   const { results: existing } = await c.env.DB.prepare(
     'SELECT COUNT(*) as count FROM workspaces WHERE user_id = ?'
   ).bind(clerkId).all<{ count: number }>()
   const count = existing[0]?.count ?? 0
 
+  if (user.plan === 'free' && count >= 1) return c.json({ error: 'Pro required for multiple workspaces' }, 403)
+
+  const now = Math.floor(Date.now() / 1000)
+  const weeksAsPro = user.started_at ? Math.floor((now - user.started_at) / (7 * 24 * 60 * 60)) : 0
+  const workspaceCap = WORKSPACE_BASE_CAP + Math.max(0, weeksAsPro) * WEEKS_PER_EXTRA_WORKSPACE
+  if (count >= workspaceCap) return c.json({ error: 'Workspace limit reached' }, 403)
+
+  const { name } = await c.req.json<{ name?: string }>().catch(() => ({ name: undefined }))
   const id = crypto.randomUUID()
   const workspaceName = name ?? `Workspace ${count + 1}`
 
@@ -126,12 +133,33 @@ app.post('/', async (c) => {
 app.patch('/:id', async (c) => {
   const clerkId = c.get('clerkId')
   const { id } = c.req.param()
-  const { name } = await c.req.json<{ name: string }>()
-  if (typeof name !== 'string') return c.json({ error: 'Invalid name' }, 400)
+  const body = await c.req.json<{ name?: string; is_pinned?: boolean; is_favourite?: boolean }>()
 
+  if (body.is_pinned !== undefined) {
+    if (body.is_pinned) {
+      await c.env.DB.prepare(
+        'UPDATE workspaces SET is_pinned = 0 WHERE user_id = ? AND id != ?'
+      ).bind(clerkId, id).run()
+    }
+    const result = await c.env.DB.prepare(
+      'UPDATE workspaces SET is_pinned = ? WHERE id = ? AND user_id = ?'
+    ).bind(body.is_pinned ? 1 : 0, id, clerkId).run()
+    if (result.meta.changes === 0) return c.json({ error: 'Not found' }, 404)
+    return c.json({ ok: true })
+  }
+
+  if (body.is_favourite !== undefined) {
+    const result = await c.env.DB.prepare(
+      'UPDATE workspaces SET is_favourite = ? WHERE id = ? AND user_id = ?'
+    ).bind(body.is_favourite ? 1 : 0, id, clerkId).run()
+    if (result.meta.changes === 0) return c.json({ error: 'Not found' }, 404)
+    return c.json({ ok: true })
+  }
+
+  if (typeof body.name !== 'string') return c.json({ error: 'Invalid body' }, 400)
   const result = await c.env.DB.prepare(
     'UPDATE workspaces SET name = ? WHERE id = ? AND user_id = ?'
-  ).bind(name.slice(0, 200), id, clerkId).run()
+  ).bind(body.name.slice(0, 200), id, clerkId).run()
 
   if (result.meta.changes === 0) return c.json({ error: 'Not found' }, 404)
   return c.json({ ok: true })
