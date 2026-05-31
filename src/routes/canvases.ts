@@ -35,9 +35,15 @@ app.post('/', async (c) => {
   await c.env.STORAGE.put(r2_key, JSON.stringify(empty), {
     httpMetadata: { contentType: 'application/json' },
   })
-  await c.env.DB.prepare(
-    'INSERT INTO canvases (id, workspace_id, name, r2_key, position) VALUES (?, ?, ?, ?, ?)'
-  ).bind(id, workspaceId, canvasName, r2_key, count).run()
+  try {
+    await c.env.DB.prepare(
+      'INSERT INTO canvases (id, workspace_id, name, r2_key, position) VALUES (?, ?, ?, ?, ?)'
+    ).bind(id, workspaceId, canvasName, r2_key, count).run()
+  } catch (err) {
+    // Clean up the R2 blob so it doesn't become an orphan
+    await c.env.STORAGE.delete(r2_key)
+    throw err
+  }
 
   return c.json({ id, name: canvasName }, 201)
 })
@@ -227,9 +233,15 @@ app.post('/:id/share', async (c) => {
     await c.env.STORAGE.put(shareR2Key, canvasData, {
       httpMetadata: { contentType: 'application/json' },
     })
-    await c.env.DB.prepare(
-      'INSERT INTO shares (token, canvas_id, type, r2_key, expires_at) VALUES (?, ?, ?, ?, ?)'
-    ).bind(token, id, 'frozen', shareR2Key, expiresAt).run()
+    try {
+      await c.env.DB.prepare(
+        'INSERT INTO shares (token, canvas_id, type, r2_key, expires_at) VALUES (?, ?, ?, ?, ?)'
+      ).bind(token, id, 'frozen', shareR2Key, expiresAt).run()
+    } catch (err) {
+      // Clean up the R2 blob so it doesn't become an orphan
+      await c.env.STORAGE.delete(shareR2Key)
+      throw err
+    }
 
     return c.json({ token, url: `https://drawzil.la/s/${token}`, type: 'frozen', expires_at: expiresAt, created_at: now })
   }

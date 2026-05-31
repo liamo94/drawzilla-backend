@@ -10,6 +10,11 @@ const TOKEN_RE = /^[0-9a-f]{16}$/
 app.get('/:token', async (c) => {
   const { token } = c.req.param()
   if (!TOKEN_RE.test(token)) return c.json({ error: 'Not found' }, 404)
+
+  const ip = c.req.header('CF-Connecting-IP') ?? 'unknown'
+  const { success } = await c.env.RATE_LIMITER.limit({ key: `share-read:${ip}` })
+  if (!success) return c.json({ error: 'Too many requests' }, 429)
+
   const now = Math.floor(Date.now() / 1000)
 
   const share = await c.env.DB.prepare(
@@ -51,6 +56,10 @@ app.get('/:token', async (c) => {
 app.get('/workspace/:token', async (c) => {
   const { token } = c.req.param()
   if (!TOKEN_RE.test(token)) return c.json({ error: 'Not found' }, 404)
+
+  const ip = c.req.header('CF-Connecting-IP') ?? 'unknown'
+  const { success } = await c.env.RATE_LIMITER.limit({ key: `share-read:${ip}` })
+  if (!success) return c.json({ error: 'Too many requests' }, 429)
 
   const workspace = await c.env.DB.prepare(
     'SELECT * FROM workspaces WHERE share_token = ? AND share_enabled = 1'

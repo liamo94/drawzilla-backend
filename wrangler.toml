@@ -35,3 +35,5 @@ SENTRY_DSN = "https://5366e0811d2be93fd09c85aa577cb7e5@o4511480641945600.ingest.
 # Pre-production checklist:
 # 1. Apply D1 migrations: npx wrangler d1 migrations apply drawzilla-db --remote
 # 2. Set secrets above
+# 3. TODO: Verify STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET are live-mode keys (not test-mode sk_test_*)
+# 4. TODO: Confirm Clerk dashboard webhook has both user.created AND user.deleted events subscribed

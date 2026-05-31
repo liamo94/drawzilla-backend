@@ -39,20 +39,25 @@ app.post('/webhook', async (c) => {
     return c.json({ error: 'Invalid signature' }, 400)
   }
 
-  if (event.type === 'user.created') {
-    const { id, email_addresses, primary_email_address_id } = event.data
-    const email = email_addresses.find(e => e.id === primary_email_address_id)?.email_address ?? ''
+  try {
+    if (event.type === 'user.created') {
+      const { id, email_addresses, primary_email_address_id } = event.data
+      const email = email_addresses.find(e => e.id === primary_email_address_id)?.email_address ?? ''
 
-    await c.env.DB.prepare(
-      'INSERT OR IGNORE INTO users (clerk_id, email, plan) VALUES (?, ?, ?)'
-    ).bind(id, email, 'free').run()
+      await c.env.DB.prepare(
+        'INSERT OR IGNORE INTO users (clerk_id, email, plan) VALUES (?, ?, ?)'
+      ).bind(id, email, 'free').run()
 
-    const workspaceId = crypto.randomUUID()
-    await c.env.DB.prepare(
-      'INSERT OR IGNORE INTO workspaces (id, user_id, name, position) VALUES (?, ?, ?, ?)'
-    ).bind(workspaceId, id, 'My Workspace', 0).run()
-  } else if (event.type === 'user.deleted') {
-    await deleteUserCompletely(c.env, event.data.id)
+      const workspaceId = crypto.randomUUID()
+      await c.env.DB.prepare(
+        'INSERT OR IGNORE INTO workspaces (id, user_id, name, position) VALUES (?, ?, ?, ?)'
+      ).bind(workspaceId, id, 'My Workspace', 0).run()
+    } else if (event.type === 'user.deleted') {
+      await deleteUserCompletely(c.env, event.data.id)
+    }
+  } catch (err) {
+    console.error('[clerk-webhook] handler failed', { type: event.type }, err)
+    // Return 200 to prevent Clerk retrying — the error is logged for manual review
   }
 
   return c.json({ ok: true })
