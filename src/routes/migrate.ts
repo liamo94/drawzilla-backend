@@ -43,6 +43,17 @@ app.post('/', async (c) => {
   ).bind(clerkId).first<{ plan: string }>()
   const cloudLimit = user?.plan === 'pro' ? 9 : 3
 
+  // Clean up auto-provisioned empty placeholder canvases so migrated canvases start at position 0
+  const emptyRows = await c.env.DB.prepare(
+    'SELECT r2_key FROM canvases WHERE workspace_id = ? AND is_empty = 1'
+  ).bind(workspace.id).all<{ r2_key: string }>()
+  if (emptyRows.results.length > 0) {
+    await Promise.all(emptyRows.results.map(row => c.env.STORAGE.delete(row.r2_key)))
+    await c.env.DB.prepare(
+      'DELETE FROM canvases WHERE workspace_id = ? AND is_empty = 1'
+    ).bind(workspace.id).run()
+  }
+
   const { results: existing } = await c.env.DB.prepare(
     'SELECT COUNT(*) as count FROM canvases WHERE workspace_id = ?'
   ).bind(workspace.id).all<{ count: number }>()

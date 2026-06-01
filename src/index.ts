@@ -38,10 +38,10 @@ app.route('/workspaces', workspacesRoute)
 app.route('/canvases', canvasesRoute)
 app.route('/share', shareRoute)
 app.route('/migrate', migrateRoute)
+app.route('/stripe', stripeWebhook)
 app.route('/stripe', stripeRoutes)
 app.route('/stash', stashRoute)
 app.route('/preferences', preferencesRoute)
-app.route('/stripe', stripeWebhook)
 app.route('/clerk', clerkWebhook)
 
 
