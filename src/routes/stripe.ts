@@ -8,7 +8,13 @@ const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>()
 
 app.use('*', requireAuth)
 
-const ALLOWED_ORIGINS = ['https://drawzil.la', 'https://unleash.drawzil.la']
+const ALLOWED_ORIGINS = [
+  'https://drawzil.la',
+  'https://unleash.drawzil.la',
+  'http://localhost:5173',
+  'http://localhost:5174',
+  'http://localhost:5175',
+]
 
 function isAllowedUrl(url: string): boolean {
   try {

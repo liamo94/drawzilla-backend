@@ -88,7 +88,9 @@ export async function cleanupUserData(env: Env, userIds: string[]) {
 export async function cleanupExpiredSubscriptions(env: Env) {
   const now = Math.floor(Date.now() / 1000)
   const { results: expired } = await env.DB.prepare(
-    "SELECT user_id FROM subscriptions WHERE status = 'cancelling' AND cancel_at < ?"
+    `SELECT s.user_id FROM subscriptions s
+     JOIN users u ON u.clerk_id = s.user_id
+     WHERE s.status = 'cancelling' AND s.cancel_at < ? AND u.gifted = 0`
   ).bind(now).all<{ user_id: string }>()
 
   await cleanupUserData(env, expired.map(r => r.user_id))

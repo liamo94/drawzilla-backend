@@ -13,6 +13,7 @@ export type Env = {
   STRIPE_PRICE_ID: string
   RATE_LIMITER: RateLimit
   SENTRY_DSN: string
+  ADMIN_SECRET: string
 }
 
 export type DBUser = {

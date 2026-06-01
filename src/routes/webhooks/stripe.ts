@@ -55,7 +55,7 @@ app.post('/webhook', async (c) => {
                AND status = 'cancelling' AND stripe_sub_id != ?`
             ).bind(customerId, sub.id),
             c.env.DB.prepare(
-              'UPDATE users SET plan = ? WHERE stripe_customer_id = ?'
+              'UPDATE users SET plan = ? WHERE stripe_customer_id = ? AND gifted = 0'
             ).bind('pro', customerId),
           ])
         } else if (sub.status === 'past_due') {
@@ -71,7 +71,7 @@ app.post('/webhook', async (c) => {
                WHERE stripe_sub_id = ?`
             ).bind(sub.status, periodEnd, sub.id),
             c.env.DB.prepare(
-              'UPDATE users SET plan = ? WHERE stripe_customer_id = ?'
+              'UPDATE users SET plan = ? WHERE stripe_customer_id = ? AND gifted = 0'
             ).bind('free', customerId),
           ])
         }
