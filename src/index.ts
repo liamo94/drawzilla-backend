@@ -47,7 +47,7 @@ app.route('/stash', stashRoute)
 app.route('/preferences', preferencesRoute)
 app.route('/clerk', clerkWebhook)
 app.route('/admin', adminRoute)
-app.route('/ingest', posthogRoute)
+app.route('/ph', posthogRoute)
 
 
 export default withSentry(
