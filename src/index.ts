@@ -12,6 +12,7 @@ import stripeRoutes from './routes/stripe'
 import stashRoute from './routes/stash'
 import preferencesRoute from './routes/preferences'
 import adminRoute from './routes/admin'
+import posthogRoute from './routes/posthog'
 import { cleanupExpiredShares, cleanupExpiredSubscriptions } from './utils/cleanup'
 import { backupDatabase } from './utils/backup'
 
@@ -46,6 +47,7 @@ app.route('/stash', stashRoute)
 app.route('/preferences', preferencesRoute)
 app.route('/clerk', clerkWebhook)
 app.route('/admin', adminRoute)
+app.route('/ingest', posthogRoute)
 
 
 export default withSentry(
