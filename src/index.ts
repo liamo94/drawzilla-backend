@@ -23,6 +23,7 @@ app.use(
     origin: origin => {
       const allowed = [
         'https://drawzil.la',
+        'https://www.drawzil.la',
         'https://unleash.drawzil.la',
         'http://localhost:5173',
         'http://localhost:5174',

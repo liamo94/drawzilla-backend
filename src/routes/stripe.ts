@@ -28,16 +28,16 @@ function isAllowedUrl(url: string): boolean {
 app.get('/status', async (c) => {
   const clerkId = c.get('clerkId')
   const user = await c.env.DB.prepare(
-    `SELECT u.plan, s.status, s.cancel_at, s.started_at
+    `SELECT u.plan, u.gifted, s.status, s.cancel_at, s.started_at
      FROM users u
      LEFT JOIN subscriptions s ON s.user_id = u.clerk_id AND s.status != 'expired'
      WHERE u.clerk_id = ?`
-  ).bind(clerkId).first<{ plan: string; status: string | null; cancel_at: number | null; started_at: number | null }>()
+  ).bind(clerkId).first<{ plan: string; gifted: number; status: string | null; cancel_at: number | null; started_at: number | null }>()
 
   if (!user) return c.json({ plan: 'free', subscription: null, startedAt: null })
   return c.json({
     plan: user.plan,
-    subscription: user.status ? { status: user.status, cancelAt: user.cancel_at } : null,
+    subscription: user.gifted ? null : (user.status ? { status: user.status, cancelAt: user.cancel_at } : null),
     startedAt: user.started_at ?? null,
   })
 })
