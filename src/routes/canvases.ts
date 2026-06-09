@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { requireAuth, type AuthVariables } from '../middleware/auth'
 import type { Env, DBCanvas, CanvasData } from '../types'
 import { generateShareToken } from '../utils/token'
+import { hashPassword } from '../utils/crypto'
 
 const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>()
 
@@ -86,8 +87,10 @@ app.get('/:id/shares', async (c) => {
   if (!canvas) return c.json({ error: 'Not found' }, 404)
 
   const { results } = await c.env.DB.prepare(
-    'SELECT token, type, expires_at, view_count, created_at FROM shares WHERE canvas_id = ? AND (expires_at IS NULL OR expires_at > ?) ORDER BY created_at DESC'
-  ).bind(id, now).all<{ token: string; type: string; expires_at: number | null; view_count: number; created_at: number }>()
+    `SELECT token, type, expires_at, view_count, created_at,
+     CASE WHEN password_hash IS NOT NULL THEN 1 ELSE 0 END as has_password
+     FROM shares WHERE canvas_id = ? AND (expires_at IS NULL OR expires_at > ?) ORDER BY created_at DESC`
+  ).bind(id, now).all<{ token: string; type: string; expires_at: number | null; view_count: number; created_at: number; has_password: number }>()
 
   return c.json(results)
 })
@@ -204,6 +207,13 @@ app.post('/:id/share', async (c) => {
   const isPro = user?.plan === 'pro'
 
   if (isPro) {
+    const body = await c.req.json<{ expires_in_days?: number | null; password?: string | null }>().catch(() => ({} as { expires_in_days?: number | null; password?: string | null }))
+    const VALID_DAYS = [7, 30, 90]
+    const expiresAt = body.expires_in_days && VALID_DAYS.includes(body.expires_in_days)
+      ? now + body.expires_in_days * 86400
+      : null
+    const passwordHash = body.password ? await hashPassword(body.password) : null
+
     // Upsert — reuse existing live share for this canvas if one exists
     const existing = await c.env.DB.prepare(
       "SELECT token FROM shares WHERE canvas_id = ? AND type = 'live'"
@@ -211,10 +221,15 @@ app.post('/:id/share', async (c) => {
 
     const token = existing?.token ?? generateShareToken()
     if (!existing) {
-      await c.env.DB.prepare('INSERT INTO shares (token, canvas_id, type) VALUES (?, ?, ?)')
-        .bind(token, id, 'live').run()
+      await c.env.DB.prepare(
+        'INSERT INTO shares (token, canvas_id, type, expires_at, password_hash) VALUES (?, ?, ?, ?, ?)'
+      ).bind(token, id, 'live', expiresAt, passwordHash).run()
+    } else {
+      await c.env.DB.prepare(
+        'UPDATE shares SET expires_at = ?, password_hash = ? WHERE token = ?'
+      ).bind(expiresAt, passwordHash, token).run()
     }
-    return c.json({ token, url: `https://drawzil.la/s/${token}`, type: 'live', expires_at: null, created_at: now })
+    return c.json({ token, url: `https://drawzil.la/s/${token}`, type: 'live', expires_at: expiresAt, has_password: passwordHash !== null, created_at: now })
   } else {
     // Free: frozen snapshot, expires in 7 days, hard cap of 100 active per canvas
     const countRow = await c.env.DB.prepare(
@@ -243,8 +258,51 @@ app.post('/:id/share', async (c) => {
       throw err
     }
 
-    return c.json({ token, url: `https://drawzil.la/s/${token}`, type: 'frozen', expires_at: expiresAt, created_at: now })
+    return c.json({ token, url: `https://drawzil.la/s/${token}`, type: 'frozen', expires_at: expiresAt, has_password: false, created_at: now })
   }
+})
+
+app.patch('/:id/share/:token', async (c) => {
+  const clerkId = c.get('clerkId')
+  const { id, token } = c.req.param()
+
+  const user = await c.env.DB.prepare('SELECT plan FROM users WHERE clerk_id = ?')
+    .bind(clerkId).first<{ plan: string }>()
+  if (user?.plan !== 'pro') return c.json({ error: 'Pro required' }, 403)
+
+  const share = await c.env.DB.prepare(
+    `SELECT s.token, s.password_hash, s.expires_at FROM shares s
+     JOIN canvases c ON c.id = s.canvas_id
+     JOIN workspaces w ON w.id = c.workspace_id
+     WHERE s.token = ? AND s.canvas_id = ? AND s.type = 'live' AND w.user_id = ?`
+  ).bind(token, id, clerkId).first<{ token: string; password_hash: string | null; expires_at: number | null }>()
+  if (!share) return c.json({ error: 'Not found' }, 404)
+
+  const body = await c.req.json<{
+    expires_in_days?: number | null
+    password?: string | null
+    remove_password?: boolean
+  }>().catch(() => ({} as { expires_in_days?: number | null; password?: string | null; remove_password?: boolean }))
+
+  const now = Math.floor(Date.now() / 1000)
+  const VALID_DAYS = [7, 30, 90]
+  // Only recalculate expiry if the client explicitly sent expires_in_days; preserve existing otherwise
+  const expiresAt = 'expires_in_days' in body
+    ? (body.expires_in_days && VALID_DAYS.includes(body.expires_in_days) ? now + body.expires_in_days * 86400 : null)
+    : share.expires_at
+
+  let passwordHash: string | null = share.password_hash
+  if (body.remove_password) {
+    passwordHash = null
+  } else if (body.password) {
+    passwordHash = await hashPassword(body.password)
+  }
+
+  await c.env.DB.prepare(
+    'UPDATE shares SET expires_at = ?, password_hash = ? WHERE token = ?'
+  ).bind(expiresAt, passwordHash, token).run()
+
+  return c.json({ ok: true, expires_at: expiresAt, has_password: passwordHash !== null })
 })
 
 app.delete('/:id/share/:token', async (c) => {

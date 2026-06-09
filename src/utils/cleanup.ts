@@ -32,7 +32,7 @@ export async function deleteUserCompletely(env: Env, clerkId: string) {
 export async function cleanupExpiredShares(env: Env) {
   const now = Math.floor(Date.now() / 1000)
   const { results: expired } = await env.DB.prepare(
-    "SELECT token, r2_key FROM shares WHERE type = 'frozen' AND expires_at < ?"
+    'SELECT token, r2_key FROM shares WHERE expires_at IS NOT NULL AND expires_at < ?'
   ).bind(now).all<{ token: string; r2_key: string | null }>()
 
   if (expired.length === 0) return

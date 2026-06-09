@@ -1,10 +1,17 @@
 import { Hono } from 'hono'
 import { requireAuth, type AuthVariables } from '../middleware/auth'
 import type { Env, DBShare, DBCanvas, DBWorkspace, CanvasData } from '../types'
+import { verifyPassword, generateAccessToken, verifyAccessToken } from '../utils/crypto'
 
 const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>()
 
 const TOKEN_RE = /^[0-9a-f]{16}$/
+
+async function checkAccessToken(c: { req: { header: (k: string) => string | undefined } }, shareToken: string, secret: string): Promise<boolean> {
+  const token = c.req.header('X-Access-Token')
+  if (!token) return false
+  return verifyAccessToken(shareToken, token, secret)
+}
 
 // GET /share/:token — single canvas (frozen snapshot or live)
 app.get('/:token', async (c) => {
@@ -17,10 +24,21 @@ app.get('/:token', async (c) => {
 
   const now = Math.floor(Date.now() / 1000)
 
+  // Query without expiry filter so we can distinguish not-found vs expired
   const share = await c.env.DB.prepare(
-    'SELECT * FROM shares WHERE token = ? AND (expires_at IS NULL OR expires_at > ?)'
-  ).bind(token, now).first<DBShare>()
+    'SELECT * FROM shares WHERE token = ?'
+  ).bind(token).first<DBShare>()
+
   if (!share) return c.json({ error: 'Not found' }, 404)
+
+  if (share.expires_at !== null && share.expires_at <= now) {
+    return c.json({ error: 'Expired', expired: true }, 410)
+  }
+
+  if (share.password_hash) {
+    const ok = await checkAccessToken(c, token, c.env.ADMIN_SECRET)
+    if (!ok) return c.json({ error: 'Password required', password_required: true }, 401)
+  }
 
   const expiresAt = share.expires_at ?? null
 
@@ -54,6 +72,37 @@ app.get('/:token', async (c) => {
     c.header('Cache-Control', 'no-store')
   }
   return c.json({ type: 'canvas', name: canvasName, data: canvasData, expires_at: expiresAt })
+})
+
+// POST /share/:token/unlock — verify password, return access token
+app.post('/:token/unlock', async (c) => {
+  const { token } = c.req.param()
+  if (!TOKEN_RE.test(token)) return c.json({ error: 'Not found' }, 404)
+
+  const ip = c.req.header('CF-Connecting-IP') ?? 'unknown'
+  const { success } = await c.env.RATE_LIMITER.limit({ key: `share-unlock:${ip}` })
+  if (!success) return c.json({ error: 'Too many requests' }, 429)
+
+  const now = Math.floor(Date.now() / 1000)
+
+  const share = await c.env.DB.prepare(
+    'SELECT token, expires_at, password_hash FROM shares WHERE token = ?'
+  ).bind(token).first<Pick<DBShare, 'token' | 'expires_at' | 'password_hash'>>()
+
+  if (!share) return c.json({ error: 'Not found' }, 404)
+  if (share.expires_at !== null && share.expires_at <= now) {
+    return c.json({ error: 'Expired', expired: true }, 410)
+  }
+  if (!share.password_hash) return c.json({ error: 'No password set' }, 400)
+
+  const body = await c.req.json<{ password?: string }>().catch(() => ({} as { password?: string }))
+  if (!body.password) return c.json({ error: 'Password required' }, 400)
+
+  const valid = await verifyPassword(body.password, share.password_hash)
+  if (!valid) return c.json({ error: 'Incorrect password' }, 401)
+
+  const accessToken = await generateAccessToken(token, c.env.ADMIN_SECRET)
+  return c.json({ access_token: accessToken })
 })
 
 // GET /share/workspace/:token — all canvases in a workspace (Pro live link)

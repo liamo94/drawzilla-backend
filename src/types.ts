@@ -53,6 +53,7 @@ export type DBShare = {
   type: 'frozen' | 'live'
   r2_key: string | null
   expires_at: number | null
+  password_hash: string | null
   view_count: number
   created_at: number
 }
