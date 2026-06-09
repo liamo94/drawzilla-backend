@@ -31,6 +31,7 @@ export type DBWorkspace = {
   position: number
   share_token: string | null
   share_enabled: number
+  view_count: number
   is_pinned: number
   is_favourite: number
   created_at: number
@@ -52,6 +53,7 @@ export type DBShare = {
   type: 'frozen' | 'live'
   r2_key: string | null
   expires_at: number | null
+  view_count: number
   created_at: number
 }
 

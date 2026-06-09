@@ -12,7 +12,6 @@ import stripeRoutes from './routes/stripe'
 import stashRoute from './routes/stash'
 import preferencesRoute from './routes/preferences'
 import adminRoute from './routes/admin'
-import posthogRoute from './routes/posthog'
 import { cleanupExpiredShares, cleanupExpiredSubscriptions } from './utils/cleanup'
 import { backupDatabase } from './utils/backup'
 
@@ -47,7 +46,18 @@ app.route('/stash', stashRoute)
 app.route('/preferences', preferencesRoute)
 app.route('/clerk', clerkWebhook)
 app.route('/admin', adminRoute)
-app.route('/ph', posthogRoute)
+
+app.all('/ph/*', async (c) => {
+  const url = new URL(c.req.url)
+  const path = url.pathname.replace('/ph', '')
+  const target = `https://eu.i.posthog.com${path}${url.search}`
+  const res = await fetch(target, {
+    method: c.req.method,
+    headers: { 'Content-Type': c.req.header('Content-Type') ?? 'application/json' },
+    body: c.req.method !== 'GET' && c.req.method !== 'HEAD' ? await c.req.arrayBuffer() : undefined,
+  })
+  return new Response(res.body, { status: res.status })
+})
 
 
 export default withSentry(

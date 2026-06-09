@@ -12,12 +12,12 @@ app.get('/shared', async (c) => {
   const now = Math.floor(Date.now() / 1000)
 
   const { results: workspaces } = await c.env.DB.prepare(
-    `SELECT id, name, share_token as token FROM workspaces
+    `SELECT id, name, share_token as token, view_count FROM workspaces
      WHERE user_id = ? AND share_enabled = 1 ORDER BY position ASC`
-  ).bind(clerkId).all<{ id: string; name: string; token: string }>()
+  ).bind(clerkId).all<{ id: string; name: string; token: string; view_count: number }>()
 
   const { results: canvases } = await c.env.DB.prepare(
-    `SELECT s.token, s.type, c.id as canvas_id, c.name as canvas_name,
+    `SELECT s.token, s.type, s.view_count, c.id as canvas_id, c.name as canvas_name,
             w.id as workspace_id, w.name as workspace_name
      FROM shares s
      JOIN canvases c ON c.id = s.canvas_id
@@ -25,7 +25,7 @@ app.get('/shared', async (c) => {
      WHERE w.user_id = ? AND (s.expires_at IS NULL OR s.expires_at > ?)
      ORDER BY s.created_at DESC`
   ).bind(clerkId, now).all<{
-    token: string; type: string;
+    token: string; type: string; view_count: number;
     canvas_id: string; canvas_name: string;
     workspace_id: string; workspace_name: string;
   }>()
@@ -36,7 +36,7 @@ app.get('/shared', async (c) => {
 app.get('/', async (c) => {
   const clerkId = c.get('clerkId')
   const { results: workspaces } = await c.env.DB.prepare(
-    'SELECT id, user_id, name, position, share_token, share_enabled, is_pinned, is_favourite, created_at FROM workspaces WHERE user_id = ? ORDER BY position ASC'
+    'SELECT id, user_id, name, position, share_token, share_enabled, view_count, is_pinned, is_favourite, created_at FROM workspaces WHERE user_id = ? ORDER BY position ASC'
   ).bind(clerkId).all<DBWorkspace>()
 
   if (workspaces.length === 0) return c.json([])

@@ -44,6 +44,10 @@ app.get('/:token', async (c) => {
     canvasName = canvas.name
   }
 
+  c.executionCtx.waitUntil(
+    c.env.DB.prepare('UPDATE shares SET view_count = view_count + 1 WHERE token = ?').bind(token).run()
+  )
+
   if (share.type === 'frozen') {
     c.header('Cache-Control', 'public, max-age=3600')
   } else {
@@ -76,6 +80,10 @@ app.get('/workspace/:token', async (c) => {
       const data = obj ? await obj.json<CanvasData>() : { strokes: [], view: { x: 0, y: 0, scale: 1 } }
       return { id: canvas.id, name: canvas.name, position: canvas.position, data }
     })
+  )
+
+  c.executionCtx.waitUntil(
+    c.env.DB.prepare('UPDATE workspaces SET view_count = view_count + 1 WHERE id = ?').bind(workspace.id).run()
   )
 
   c.header('Cache-Control', 'no-store')

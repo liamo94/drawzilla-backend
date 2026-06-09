@@ -86,8 +86,8 @@ app.get('/:id/shares', async (c) => {
   if (!canvas) return c.json({ error: 'Not found' }, 404)
 
   const { results } = await c.env.DB.prepare(
-    'SELECT token, type, expires_at, created_at FROM shares WHERE canvas_id = ? AND (expires_at IS NULL OR expires_at > ?) ORDER BY created_at DESC'
-  ).bind(id, now).all<{ token: string; type: string; expires_at: number | null; created_at: number }>()
+    'SELECT token, type, expires_at, view_count, created_at FROM shares WHERE canvas_id = ? AND (expires_at IS NULL OR expires_at > ?) ORDER BY created_at DESC'
+  ).bind(id, now).all<{ token: string; type: string; expires_at: number | null; view_count: number; created_at: number }>()
 
   return c.json(results)
 })
