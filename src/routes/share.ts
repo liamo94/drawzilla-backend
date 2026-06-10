@@ -114,10 +114,21 @@ app.get('/workspace/:token', async (c) => {
   const { success } = await c.env.RATE_LIMITER.limit({ key: `share-read:${ip}` })
   if (!success) return c.json({ error: 'Too many requests' }, 429)
 
+  const now = Math.floor(Date.now() / 1000)
+
   const workspace = await c.env.DB.prepare(
     'SELECT * FROM workspaces WHERE share_token = ? AND share_enabled = 1'
   ).bind(token).first<DBWorkspace>()
   if (!workspace) return c.json({ error: 'Not found' }, 404)
+
+  if (workspace.share_expires_at !== null && workspace.share_expires_at <= now) {
+    return c.json({ error: 'Expired', expired: true }, 410)
+  }
+
+  if (workspace.share_password_hash) {
+    const ok = await checkAccessToken(c, token, c.env.ADMIN_SECRET)
+    if (!ok) return c.json({ error: 'Password required', password_required: true }, 401)
+  }
 
   const { results: canvases } = await c.env.DB.prepare(
     'SELECT id, name, r2_key, position FROM canvases WHERE workspace_id = ? ORDER BY position ASC'
@@ -136,7 +147,44 @@ app.get('/workspace/:token', async (c) => {
   )
 
   c.header('Cache-Control', 'no-store')
-  return c.json({ type: 'workspace', name: workspace.name, canvases: canvasData })
+  return c.json({
+    type: 'workspace',
+    name: workspace.name,
+    canvases: canvasData,
+    expires_at: workspace.share_expires_at,
+    has_password: workspace.share_password_hash !== null,
+  })
+})
+
+// POST /share/workspace/:token/unlock — verify password for workspace share
+app.post('/workspace/:token/unlock', async (c) => {
+  const { token } = c.req.param()
+  if (!TOKEN_RE.test(token)) return c.json({ error: 'Not found' }, 404)
+
+  const ip = c.req.header('CF-Connecting-IP') ?? 'unknown'
+  const { success } = await c.env.RATE_LIMITER.limit({ key: `share-unlock:${ip}` })
+  if (!success) return c.json({ error: 'Too many requests' }, 429)
+
+  const now = Math.floor(Date.now() / 1000)
+
+  const workspace = await c.env.DB.prepare(
+    'SELECT share_token, share_expires_at, share_password_hash FROM workspaces WHERE share_token = ? AND share_enabled = 1'
+  ).bind(token).first<{ share_token: string; share_expires_at: number | null; share_password_hash: string | null }>()
+
+  if (!workspace) return c.json({ error: 'Not found' }, 404)
+  if (workspace.share_expires_at !== null && workspace.share_expires_at <= now) {
+    return c.json({ error: 'Expired', expired: true }, 410)
+  }
+  if (!workspace.share_password_hash) return c.json({ error: 'No password set' }, 400)
+
+  const body = await c.req.json<{ password?: string }>().catch(() => ({} as { password?: string }))
+  if (!body.password) return c.json({ error: 'Password required' }, 400)
+
+  const valid = await verifyPassword(body.password, workspace.share_password_hash)
+  if (!valid) return c.json({ error: 'Incorrect password' }, 401)
+
+  const accessToken = await generateAccessToken(token, c.env.ADMIN_SECRET)
+  return c.json({ access_token: accessToken })
 })
 
 // DELETE /share/:token — revoke a share (auth required, must own the canvas)

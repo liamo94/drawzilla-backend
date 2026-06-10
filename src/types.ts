@@ -31,6 +31,8 @@ export type DBWorkspace = {
   position: number
   share_token: string | null
   share_enabled: number
+  share_expires_at: number | null
+  share_password_hash: string | null
   view_count: number
   is_pinned: number
   is_favourite: number

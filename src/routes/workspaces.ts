@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { requireAuth, type AuthVariables } from '../middleware/auth'
 import type { Env, DBWorkspace, CanvasData } from '../types'
 import { generateShareToken } from '../utils/token'
+import { hashPassword } from '../utils/crypto'
 
 const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>()
 
@@ -36,7 +37,7 @@ app.get('/shared', async (c) => {
 app.get('/', async (c) => {
   const clerkId = c.get('clerkId')
   const { results: workspaces } = await c.env.DB.prepare(
-    'SELECT id, user_id, name, position, share_token, share_enabled, view_count, is_pinned, is_favourite, created_at FROM workspaces WHERE user_id = ? ORDER BY position ASC'
+    'SELECT id, user_id, name, position, share_token, share_enabled, share_expires_at, share_password_hash, view_count, is_pinned, is_favourite, created_at FROM workspaces WHERE user_id = ? ORDER BY position ASC'
   ).bind(clerkId).all<DBWorkspace>()
 
   if (workspaces.length === 0) return c.json([])
@@ -51,6 +52,8 @@ app.get('/', async (c) => {
 
   return c.json(workspaces.map(w => ({
     ...w,
+    share_has_password: w.share_password_hash !== null ? 1 : 0,
+    share_password_hash: undefined,
     canvases: canvases.filter(c => c.workspace_id === w.id),
   })))
 })
@@ -206,16 +209,67 @@ app.post('/:id/share', async (c) => {
   if (user?.plan !== 'pro') return c.json({ error: 'Pro required' }, 403)
 
   const workspace = await c.env.DB.prepare(
-    'SELECT id, share_token FROM workspaces WHERE id = ? AND user_id = ?'
-  ).bind(id, clerkId).first<{ id: string; share_token: string | null }>()
+    'SELECT id, share_token, share_expires_at, share_password_hash FROM workspaces WHERE id = ? AND user_id = ?'
+  ).bind(id, clerkId).first<{ id: string; share_token: string | null; share_expires_at: number | null; share_password_hash: string | null }>()
   if (!workspace) return c.json({ error: 'Not found' }, 404)
 
-  const token = workspace.share_token ?? generateShareToken()
-  await c.env.DB.prepare(
-    'UPDATE workspaces SET share_token = ?, share_enabled = 1 WHERE id = ?'
-  ).bind(token, id).run()
+  const body = await c.req.json<{ expires_in_days?: number | null; password?: string | null }>()
+    .catch(() => ({} as { expires_in_days?: number | null; password?: string | null }))
 
-  return c.json({ token, url: `https://drawzil.la/s/w/${token}` })
+  const token = workspace.share_token ?? generateShareToken()
+  const now = Math.floor(Date.now() / 1000)
+  const VALID_DAYS = [7, 30, 90]
+  const expiresAt = 'expires_in_days' in body
+    ? (body.expires_in_days && VALID_DAYS.includes(body.expires_in_days) ? now + body.expires_in_days * 86400 : null)
+    : workspace.share_expires_at
+
+  let passwordHash: string | null = workspace.share_password_hash
+  if (body.password) passwordHash = await hashPassword(body.password)
+
+  await c.env.DB.prepare(
+    'UPDATE workspaces SET share_token = ?, share_enabled = 1, share_expires_at = ?, share_password_hash = ? WHERE id = ?'
+  ).bind(token, expiresAt, passwordHash, id).run()
+
+  return c.json({ token, url: `https://drawzil.la/s/w/${token}`, expires_at: expiresAt, has_password: passwordHash !== null })
+})
+
+app.patch('/:id/share', async (c) => {
+  const clerkId = c.get('clerkId')
+  const { id } = c.req.param()
+
+  const user = await c.env.DB.prepare('SELECT plan FROM users WHERE clerk_id = ?')
+    .bind(clerkId).first<{ plan: string }>()
+  if (user?.plan !== 'pro') return c.json({ error: 'Pro required' }, 403)
+
+  const workspace = await c.env.DB.prepare(
+    'SELECT id, share_expires_at, share_password_hash FROM workspaces WHERE id = ? AND user_id = ? AND share_enabled = 1'
+  ).bind(id, clerkId).first<{ id: string; share_expires_at: number | null; share_password_hash: string | null }>()
+  if (!workspace) return c.json({ error: 'Not found' }, 404)
+
+  const body = await c.req.json<{
+    expires_in_days?: number | null
+    password?: string | null
+    remove_password?: boolean
+  }>().catch(() => ({} as { expires_in_days?: number | null; password?: string | null; remove_password?: boolean }))
+
+  const now = Math.floor(Date.now() / 1000)
+  const VALID_DAYS = [7, 30, 90]
+  const expiresAt = 'expires_in_days' in body
+    ? (body.expires_in_days && VALID_DAYS.includes(body.expires_in_days) ? now + body.expires_in_days * 86400 : null)
+    : workspace.share_expires_at
+
+  let passwordHash: string | null = workspace.share_password_hash
+  if (body.remove_password) {
+    passwordHash = null
+  } else if (body.password) {
+    passwordHash = await hashPassword(body.password)
+  }
+
+  await c.env.DB.prepare(
+    'UPDATE workspaces SET share_expires_at = ?, share_password_hash = ? WHERE id = ?'
+  ).bind(expiresAt, passwordHash, id).run()
+
+  return c.json({ ok: true, expires_at: expiresAt, has_password: passwordHash !== null })
 })
 
 app.delete('/:id/share', async (c) => {
@@ -223,7 +277,7 @@ app.delete('/:id/share', async (c) => {
   const { id } = c.req.param()
 
   const result = await c.env.DB.prepare(
-    'UPDATE workspaces SET share_enabled = 0 WHERE id = ? AND user_id = ?'
+    'UPDATE workspaces SET share_enabled = 0, share_expires_at = NULL, share_password_hash = NULL WHERE id = ? AND user_id = ?'
   ).bind(id, clerkId).run()
 
   if (result.meta.changes === 0) return c.json({ error: 'Not found' }, 404)
