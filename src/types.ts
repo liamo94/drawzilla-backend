@@ -37,6 +37,9 @@ export type DBWorkspace = {
   is_pinned: number
   is_favourite: number
   created_at: number
+  slides_json: string | null
+  presentation_share_token: string | null
+  presentation_share_enabled: number
 }
 
 export type DBCanvas = {

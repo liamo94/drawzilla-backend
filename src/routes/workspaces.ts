@@ -37,7 +37,7 @@ app.get('/shared', async (c) => {
 app.get('/', async (c) => {
   const clerkId = c.get('clerkId')
   const { results: workspaces } = await c.env.DB.prepare(
-    'SELECT id, user_id, name, position, share_token, share_enabled, share_expires_at, share_password_hash, view_count, is_pinned, is_favourite, created_at FROM workspaces WHERE user_id = ? ORDER BY position ASC'
+    'SELECT id, user_id, name, position, share_token, share_enabled, share_expires_at, share_password_hash, view_count, is_pinned, is_favourite, created_at, presentation_share_token, presentation_share_enabled, presentation_share_password_hash FROM workspaces WHERE user_id = ? ORDER BY position ASC'
   ).bind(clerkId).all<DBWorkspace>()
 
   if (workspaces.length === 0) return c.json([])
@@ -54,6 +54,8 @@ app.get('/', async (c) => {
     ...w,
     share_has_password: w.share_password_hash !== null ? 1 : 0,
     share_password_hash: undefined,
+    presentation_share_has_password: (w as any).presentation_share_password_hash !== null ? 1 : 0,
+    presentation_share_password_hash: undefined,
     canvases: canvases.filter(c => c.workspace_id === w.id),
   })))
 })
@@ -136,7 +138,16 @@ app.post('/', async (c) => {
 app.patch('/:id', async (c) => {
   const clerkId = c.get('clerkId')
   const { id } = c.req.param()
-  const body = await c.req.json<{ name?: string; is_pinned?: boolean; is_favourite?: boolean }>()
+  const body = await c.req.json<{ name?: string; is_pinned?: boolean; is_favourite?: boolean; slides?: unknown }>()
+
+  if (body.slides !== undefined) {
+    const slidesJson = body.slides === null ? null : JSON.stringify(body.slides)
+    const result = await c.env.DB.prepare(
+      'UPDATE workspaces SET slides_json = ? WHERE id = ? AND user_id = ?'
+    ).bind(slidesJson, id, clerkId).run()
+    if (result.meta.changes === 0) return c.json({ error: 'Not found' }, 404)
+    return c.json({ ok: true })
+  }
 
   if (body.is_pinned !== undefined) {
     if (body.is_pinned) {
@@ -278,6 +289,67 @@ app.delete('/:id/share', async (c) => {
 
   const result = await c.env.DB.prepare(
     'UPDATE workspaces SET share_enabled = 0, share_expires_at = NULL, share_password_hash = NULL WHERE id = ? AND user_id = ?'
+  ).bind(id, clerkId).run()
+
+  if (result.meta.changes === 0) return c.json({ error: 'Not found' }, 404)
+  return c.json({ ok: true })
+})
+
+app.post('/:id/presentation-share', async (c) => {
+  const clerkId = c.get('clerkId')
+  const { id } = c.req.param()
+
+  const { success } = await c.env.RATE_LIMITER.limit({ key: `${clerkId}:share` })
+  if (!success) return c.json({ error: 'Too many requests' }, 429)
+
+  const user = await c.env.DB.prepare('SELECT plan FROM users WHERE clerk_id = ?')
+    .bind(clerkId).first<{ plan: string }>()
+  if (user?.plan !== 'pro') return c.json({ error: 'Pro required' }, 403)
+
+  const workspace = await c.env.DB.prepare(
+    'SELECT id, presentation_share_token FROM workspaces WHERE id = ? AND user_id = ?'
+  ).bind(id, clerkId).first<{ id: string; presentation_share_token: string | null }>()
+  if (!workspace) return c.json({ error: 'Not found' }, 404)
+
+  const body = await c.req.json<{ password?: string | null }>().catch(() => ({} as { password?: string | null }))
+  const passwordHash = body.password ? await hashPassword(body.password) : null
+
+  const token = workspace.presentation_share_token ?? generateShareToken()
+  await c.env.DB.prepare(
+    'UPDATE workspaces SET presentation_share_token = ?, presentation_share_enabled = 1, presentation_share_password_hash = ? WHERE id = ?'
+  ).bind(token, passwordHash, id).run()
+
+  return c.json({ token, url: `https://drawzil.la/s/p/${token}`, has_password: passwordHash !== null })
+})
+
+app.patch('/:id/presentation-share/password', async (c) => {
+  const clerkId = c.get('clerkId')
+  const { id } = c.req.param()
+
+  const { success } = await c.env.RATE_LIMITER.limit({ key: `${clerkId}:share` })
+  if (!success) return c.json({ error: 'Too many requests' }, 429)
+
+  const workspace = await c.env.DB.prepare(
+    'SELECT id FROM workspaces WHERE id = ? AND user_id = ? AND presentation_share_enabled = 1'
+  ).bind(id, clerkId).first<{ id: string }>()
+  if (!workspace) return c.json({ error: 'Not found' }, 404)
+
+  const body = await c.req.json<{ password?: string | null }>().catch(() => ({} as { password?: string | null }))
+  const passwordHash = body.password ? await hashPassword(body.password) : null
+
+  await c.env.DB.prepare(
+    'UPDATE workspaces SET presentation_share_password_hash = ? WHERE id = ?'
+  ).bind(passwordHash, id).run()
+
+  return c.json({ ok: true, has_password: passwordHash !== null })
+})
+
+app.delete('/:id/presentation-share', async (c) => {
+  const clerkId = c.get('clerkId')
+  const { id } = c.req.param()
+
+  const result = await c.env.DB.prepare(
+    'UPDATE workspaces SET presentation_share_enabled = 0 WHERE id = ? AND user_id = ?'
   ).bind(id, clerkId).run()
 
   if (result.meta.changes === 0) return c.json({ error: 'Not found' }, 404)

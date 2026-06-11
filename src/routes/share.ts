@@ -151,6 +151,7 @@ app.get('/workspace/:token', async (c) => {
     type: 'workspace',
     name: workspace.name,
     canvases: canvasData,
+    slides: workspace.slides_json ? JSON.parse(workspace.slides_json) : undefined,
     expires_at: workspace.share_expires_at,
     has_password: workspace.share_password_hash !== null,
   })
@@ -185,6 +186,80 @@ app.post('/workspace/:token/unlock', async (c) => {
 
   const accessToken = await generateAccessToken(token, c.env.ADMIN_SECRET)
   return c.json({ access_token: accessToken })
+})
+
+// POST /share/presentation/:token/unlock — verify password for presentation share
+app.post('/presentation/:token/unlock', async (c) => {
+  const { token } = c.req.param()
+  if (!TOKEN_RE.test(token)) return c.json({ error: 'Not found' }, 404)
+
+  const ip = c.req.header('CF-Connecting-IP') ?? 'unknown'
+  const { success } = await c.env.RATE_LIMITER.limit({ key: `share-unlock:${ip}` })
+  if (!success) return c.json({ error: 'Too many requests' }, 429)
+
+  const workspace = await c.env.DB.prepare(
+    'SELECT presentation_share_password_hash FROM workspaces WHERE presentation_share_token = ? AND presentation_share_enabled = 1'
+  ).bind(token).first<{ presentation_share_password_hash: string | null }>()
+
+  if (!workspace) return c.json({ error: 'Not found' }, 404)
+  if (!workspace.presentation_share_password_hash) return c.json({ error: 'No password set' }, 400)
+
+  const body = await c.req.json<{ password?: string }>().catch(() => ({} as { password?: string }))
+  if (!body.password) return c.json({ error: 'Password required' }, 400)
+
+  const valid = await verifyPassword(body.password, workspace.presentation_share_password_hash)
+  if (!valid) return c.json({ error: 'Incorrect password' }, 401)
+
+  const accessToken = await generateAccessToken(token, c.env.ADMIN_SECRET)
+  return c.json({ access_token: accessToken })
+})
+
+// GET /share/presentation/:token — slides only, just the canvases referenced by slides
+app.get('/presentation/:token', async (c) => {
+  const { token } = c.req.param()
+  if (!TOKEN_RE.test(token)) return c.json({ error: 'Not found' }, 404)
+
+  const ip = c.req.header('CF-Connecting-IP') ?? 'unknown'
+  const { success } = await c.env.RATE_LIMITER.limit({ key: `share-read:${ip}` })
+  if (!success) return c.json({ error: 'Too many requests' }, 429)
+
+  const workspace = await c.env.DB.prepare(
+    'SELECT id, name, slides_json, presentation_share_password_hash FROM workspaces WHERE presentation_share_token = ? AND presentation_share_enabled = 1'
+  ).bind(token).first<{ id: string; name: string; slides_json: string | null; presentation_share_password_hash: string | null }>()
+  if (!workspace) return c.json({ error: 'Not found' }, 404)
+
+  if (workspace.presentation_share_password_hash) {
+    const ok = await checkAccessToken(c, token, c.env.ADMIN_SECRET)
+    if (!ok) return c.json({ error: 'Password required', password_required: true }, 401)
+  }
+
+  const slides: { canvasId?: string }[] = workspace.slides_json ? JSON.parse(workspace.slides_json) : []
+  if (slides.length === 0) return c.json({ error: 'No slides' }, 404)
+
+  const canvasIds = [...new Set(slides.map(s => s.canvasId).filter((id): id is string => !!id))].slice(0, 20)
+
+  let canvasData: { id: string; name: string; position: number; data: CanvasData }[] = []
+  if (canvasIds.length > 0) {
+    const placeholders = canvasIds.map(() => '?').join(',')
+    const { results: canvases } = await c.env.DB.prepare(
+      `SELECT id, name, r2_key, position FROM canvases WHERE id IN (${placeholders}) AND workspace_id = ?`
+    ).bind(...canvasIds, workspace.id).all<Pick<DBCanvas, 'id' | 'name' | 'r2_key' | 'position'>>()
+
+    canvasData = await Promise.all(
+      canvases.map(async canvas => {
+        const obj = await c.env.STORAGE.get(canvas.r2_key)
+        const data = obj ? await obj.json<CanvasData>() : { strokes: [], view: { x: 0, y: 0, scale: 1 } }
+        return { id: canvas.id, name: canvas.name, position: canvas.position, data }
+      })
+    )
+  }
+
+  c.executionCtx.waitUntil(
+    c.env.DB.prepare('UPDATE workspaces SET view_count = view_count + 1 WHERE id = ?').bind(workspace.id).run()
+  )
+
+  c.header('Cache-Control', 'no-store')
+  return c.json({ type: 'presentation', name: workspace.name, slides, canvases: canvasData })
 })
 
 // DELETE /share/:token — revoke a share (auth required, must own the canvas)
