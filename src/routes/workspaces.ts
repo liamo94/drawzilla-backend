@@ -37,7 +37,7 @@ app.get('/shared', async (c) => {
 app.get('/', async (c) => {
   const clerkId = c.get('clerkId')
   const { results: workspaces } = await c.env.DB.prepare(
-    'SELECT id, user_id, name, position, share_token, share_enabled, share_expires_at, share_password_hash, view_count, is_pinned, is_favourite, created_at, presentation_share_token, presentation_share_enabled, presentation_share_password_hash FROM workspaces WHERE user_id = ? ORDER BY position ASC'
+    'SELECT id, user_id, name, position, share_token, share_enabled, share_expires_at, share_password_hash, view_count, is_pinned, is_favourite, created_at, slides_json, presentation_share_token, presentation_share_enabled, presentation_share_password_hash FROM workspaces WHERE user_id = ? ORDER BY position ASC'
   ).bind(clerkId).all<DBWorkspace>()
 
   if (workspaces.length === 0) return c.json([])
@@ -54,6 +54,8 @@ app.get('/', async (c) => {
     ...w,
     share_has_password: w.share_password_hash !== null ? 1 : 0,
     share_password_hash: undefined,
+    slides: w.slides_json ? JSON.parse(w.slides_json) : null,
+    slides_json: undefined,
     presentation_share_has_password: (w as any).presentation_share_password_hash !== null ? 1 : 0,
     presentation_share_password_hash: undefined,
     canvases: canvases.filter(c => c.workspace_id === w.id),
