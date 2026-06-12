@@ -231,11 +231,20 @@ app.post('/:id/share', async (c) => {
     }
     return c.json({ token, url: `https://drawzil.la/s/${token}`, type: 'live', expires_at: expiresAt, has_password: passwordHash !== null, created_at: now })
   } else {
-    // Free: frozen snapshot, expires in 7 days, hard cap of 100 active per canvas
-    const countRow = await c.env.DB.prepare(
-      'SELECT COUNT(*) as count FROM shares WHERE canvas_id = ? AND (expires_at IS NULL OR expires_at > ?)'
-    ).bind(id, now).first<{ count: number }>()
-    if ((countRow?.count ?? 0) >= 100) return c.json({ error: 'Share limit reached' }, 429)
+    // Free: frozen snapshot, expires in 7 days, hard cap of 20 active per canvas, 50 per user
+    const [perCanvasRow, perUserRow] = await Promise.all([
+      c.env.DB.prepare(
+        'SELECT COUNT(*) as count FROM shares WHERE canvas_id = ? AND (expires_at IS NULL OR expires_at > ?)'
+      ).bind(id, now).first<{ count: number }>(),
+      c.env.DB.prepare(
+        `SELECT COUNT(*) as count FROM shares sh
+         JOIN canvases c ON c.id = sh.canvas_id
+         JOIN workspaces w ON w.id = c.workspace_id
+         WHERE w.user_id = ? AND (sh.expires_at IS NULL OR sh.expires_at > ?)`
+      ).bind(clerkId, now).first<{ count: number }>(),
+    ])
+    if ((perCanvasRow?.count ?? 0) >= 20) return c.json({ error: 'Share limit reached' }, 429)
+    if ((perUserRow?.count ?? 0) >= 50) return c.json({ error: 'Share limit reached' }, 429)
 
     const obj = await c.env.STORAGE.get(canvas.r2_key)
     if (!obj) return c.json({ error: 'Canvas data missing' }, 404)

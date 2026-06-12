@@ -142,8 +142,11 @@ app.patch('/:id', async (c) => {
   const { id } = c.req.param()
   const body = await c.req.json<{ name?: string; is_pinned?: boolean; is_favourite?: boolean; slides?: unknown }>()
 
+  const MAX_SLIDES_BYTES = 512_000 // 512 KB
+
   if (body.slides !== undefined) {
     const slidesJson = body.slides === null ? null : JSON.stringify(body.slides)
+    if (slidesJson && slidesJson.length > MAX_SLIDES_BYTES) return c.json({ error: 'Slides too large' }, 413)
     const result = await c.env.DB.prepare(
       'UPDATE workspaces SET slides_json = ? WHERE id = ? AND user_id = ?'
     ).bind(slidesJson, id, clerkId).run()
